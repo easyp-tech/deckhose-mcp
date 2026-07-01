@@ -1,4 +1,4 @@
-# Deckhouse MCP Server
+# Deckhouse Harness
 
 MCP server for managing [Deckhouse Kubernetes Platform](https://deckhouse.ru/docs) (Community Edition).
 
