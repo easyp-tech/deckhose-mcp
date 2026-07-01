@@ -29,12 +29,17 @@ proto/                           # .proto files — single source of truth for a
 │   └── sources.proto            # Block F: SourcesAPI (stub, no RPCs yet)
 cmd/
 └── deckhouse-harness/
-    └── main.go                  # Dual-mode (stdio default + SSE via LISTEN_ADDR/-listen)
+    └── main.go                  # Dual-mode (stdio default + SSE via TRANSPORT=sse / LISTEN_ADDR / -listen)
 internal/
 ├── handler/                     # ToolHandler interface implementations
     └── k8s/
     └── client.go                # Client interface + typed/dynamic implementation
-Taskfile.yml                     # go-task: generate, lint, build, test, docker
+deploy/                          # Kubernetes manifests for SSE in-cluster deployment
+├── deployment.yaml              # Deployment in d8-system, TRANSPORT=sse, containerPort 8080
+├── service.yaml                 # ClusterIP Service, port 8080
+└── rbac.yaml                    # ServiceAccount + ClusterRole + ClusterRoleBinding (all 43 tools)
+Dockerfile                       # Multi-stage: golang:1.26 → gcr.io/distroless/static-debian12
+Taskfile.yml                     # go-task: generate, lint, build, test, docker:build, docker:load
 easyp.yaml                       # Proto deps, lint rules, codegen plugins
 ```
 
@@ -94,6 +99,8 @@ task generate        # easyp mod download && easyp generate
 task lint            # easyp lint
 task build           # go build -o deckhouse-harness ./cmd/deckhouse-harness
 task test            # go test ./...
+task docker:build    # docker build -t deckhouse-mcp:local .
+task docker:load     # kind load docker-image deckhouse-mcp:local --name d8
 task integration     # setup → test → teardown
 ```
 
@@ -151,25 +158,23 @@ New methods should be added to this interface when implementing P1+ handlers.
 
 ### Server Entrypoint (`cmd/deckhouse-harness/main.go`)
 
-- `loadKubeConfig()` — tries `rest.InClusterConfig()` first, falls back to `clientcmd` (`KUBECONFIG` env or `~/.kube/config`)
+- `loadKubeConfig()` — tries `rest.InClusterConfig()` first, falls back to `clientcmd` (`KUBECONFIG` env or `~/.kube/config`). Works for both modes: stdio local (in-cluster fails → kubeconfig) and SSE in-cluster (in-cluster succeeds).
 - `configureLogger()` — builds `*slog.Logger` from `LOG_LEVEL` / `LOG_OUTPUT` / `LOG_FILE` env vars; logs never go to stdout (reserved for MCP protocol); default: stderr + INFO
 - CLI: `urfave/cli/v3` (see `main()`): `--listen` / `--transport` flags + `Sources: cli.EnvVars("LISTEN_ADDR")` / `cli.EnvVars("TRANSPORT", "MCP_TRANSPORT")`.
-- Transport selection (now inside Action → `run(c *cli.Command)`): default stdio; presence of listen address or explicit transport selects SSE using `mcp.NewSSEHandler` + `http.Server` with graceful `Shutdown`.
-- `server.Run(ctx, &mcp.StdioTransport{})` for stdio mode.
-- `serveSSE(...)` for HTTP/SSE mode (reuses one `*mcp.Server` for N sessions).
+- Transport selection (inside Action → `run(c *cli.Command)`):
+  - `TRANSPORT=stdio` (default, including unset): `server.Run(ctx, &mcp.StdioTransport{})`
+  - `TRANSPORT=sse` (or `LISTEN_ADDR` set): `serveSSE(...)` using `mcp.NewSSEHandler` + `http.Server` with graceful `Shutdown` (10s timeout, `ReadHeaderTimeout` 5s)
+- `serveSSE(...)` reuses one `*mcp.Server` for N concurrent SSE sessions.
 - `signal.NotifyContext(SIGINT, SIGTERM)` for graceful shutdown via context cancellation
+- Constants: `defaultListenAddr=":8080"`, `shutdownTimeout=10s`, `readHeaderTimeout=5s`
 - Handlers registered via generated `pb.Register{Service}Tools(server, handler)`
 
 ### RBAC
 
-When running inside a Kubernetes Pod (in-cluster config), the server needs a ServiceAccount with permissions for the resources it manages. Create RBAC manifests manually if deploying in-cluster. The required permissions are:
+When `TRANSPORT=sse` and running inside a Kubernetes Pod (in-cluster config), the server needs a ServiceAccount with permissions for the resources it manages. The full RBAC manifests are in `deploy/rbac.yaml` (ServiceAccount + ClusterRole + ClusterRoleBinding). The required permissions cover all 43 tools:
 
-- **read**: `nodes`, `pods` (core); `nodegroups`, `staticinstances`, `moduleconfigs`, `deckhouserelease` (deckhouse.io CRDs)
-- **write**: `staticinstances`, `sshcredentials` (create only)
-
-When implementing P1+ handlers, expand RBAC if deploying in-cluster:
-- **P1 additions**: `events`, `pods/log` (core read); `moduleconfigs` (update); `deckhouserelease` (update for approve)
-- **P2 additions**: `pods/eviction` (for drain); `nodegroups`, `nodegroupconfigurations` (write); `modulesources`, `moduleupdatepolicies` (read+write)
+- **read**: `nodes`, `pods`, `events` (core); `nodegroups`, `staticinstances`, `moduleconfigs`, `deckhousereleases`, `modules`, `modulesources`, `moduleupdatepolicies`, `modulereleases` (deckhouse.io CRDs)
+- **write**: `staticinstances`, `sshcredentials` (create); `nodes` (update/patch for cordon/uncordon); `pods/eviction` (create for drain); `moduleconfigs` (update/patch); `deckhousereleases` (patch for approve); `nodegroups` (create/delete); `modulesources`, `moduleupdatepolicies` (create); `nodegroupconfigurations` (create); `secrets/d8-cluster-configuration` (get/update)
 
 ### Error Handling
 

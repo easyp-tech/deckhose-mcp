@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deckhouse-mcp
+  namespace: d8-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: d8:deckhouse-mcp
+rules:
+  # Core resources — read-only
+  - apiGroups: [""]
+    resources: ["nodes", "pods", "events"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # Core resources — cluster configuration (read + write)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "update"]
+    resourceNames: ["d8-cluster-configuration"]
+  # Core resources — node management (cordon/uncordon/drain)
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["update", "patch"]
+  # Core resources — drain (Eviction API)
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+  # Deckhouse CRDs — read-only
+  - apiGroups: ["deckhouse.io"]
+    resources:
+      - nodegroups
+      - staticinstances
+      - moduleconfigs
+      - deckhousereleases
+      - modules
+      - modulesources
+      - moduleupdatepolicies
+      - modulereleases
+    verbs: ["get", "list"]
+  # Deckhouse CRDs — write (P0)
+  - apiGroups: ["deckhouse.io"]
+    resources:
+      - staticinstances
+      - sshcredentials
+    verbs: ["create"]
+  # Deckhouse CRDs — write (P1+P2+P3)
+  - apiGroups: ["deckhouse.io"]
+    resources:
+      - staticinstances
+      - sshcredentials
+      - nodegroups
+    verbs: ["delete"]
+  - apiGroups: ["deckhouse.io"]
+    resources:
+      - nodegroups
+    verbs: ["create"]
+  - apiGroups: ["deckhouse.io"]
+    resources:
+      - moduleconfigs
+    verbs: ["update", "patch"]
+  - apiGroups: ["deckhouse.io"]
+    resources:
+      - deckhousereleases
+    verbs: ["patch"]
+  - apiGroups: ["deckhouse.io"]
+    resources:
+      - modulesources
+      - moduleupdatepolicies
+    verbs: ["create"]
+  - apiGroups: ["deckhouse.io"]
+    resources:
+      - modulesources
+    verbs: ["delete"]
+  - apiGroups: ["deckhouse.io"]
+    resources:
+      - nodegroupconfigurations
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: d8:deckhouse-mcp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: d8:deckhouse-mcp
+subjects:
+  - kind: ServiceAccount
+    name: deckhouse-mcp
+    namespace: d8-system

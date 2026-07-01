@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deckhouse-mcp
+  namespace: d8-system
+  labels:
+    app: deckhouse-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deckhouse-mcp
+  template:
+    metadata:
+      labels:
+        app: deckhouse-mcp
+    spec:
+      serviceAccountName: deckhouse-mcp
+      containers:
+        - name: deckhouse-mcp
+          image: deckhouse-mcp:local
+          imagePullPolicy: Never
+          env:
+            - name: TRANSPORT
+              value: "sse"
+            - name: LOG_LEVEL
+              value: "INFO"
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

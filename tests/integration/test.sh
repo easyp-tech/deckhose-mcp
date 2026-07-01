@@ -1,22 +1,32 @@
 #!/usr/bin/env bash
-# Integration tests for Deckhouse MCP server over stdio (newline-delimited JSON).
+# Integration tests for Deckhouse MCP server (dual transport: stdio + SSE).
 #
 # Usage: bash tests/integration/test.sh
 #
+# Transport is selected by the TRANSPORT env var (default: stdio):
+#   stdio — FIFO-based subprocess communication (default)
+#   sse   — HTTP/SSE via curl (requires port-forward from setup.sh)
+#
 # Requires: jq, kubectl, and a running Kind+Deckhouse cluster (see setup.sh).
-# The MCP server binary is launched as a local subprocess communicating via
-# FIFOs (stdin/stdout). Logs go to stderr / a temp file.
+# All 58 test cases are transport-agnostic — only the helper layer differs.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 KUBE_CONTEXT="${KUBE_CONTEXT:-kind-d8}"
 BINARY_PATH="${BINARY_PATH:-$SCRIPT_DIR/deckhouse-harness}"
 STDERR_LOG="${STDERR_LOG:-$SCRIPT_DIR/mcp-stderr.log}"
+TRANSPORT_MODE="${TRANSPORT:-stdio}"
+if [ -f "$SCRIPT_DIR/.transport-mode" ]; then
+  TRANSPORT_MODE=$(cat "$SCRIPT_DIR/.transport-mode")
+fi
+MCP_BASE_URL="${MCP_BASE_URL:-http://localhost:8080}"
 
-if [ ! -f "$BINARY_PATH" ]; then
+if [ "$TRANSPORT_MODE" = "stdio" ] && [ ! -f "$BINARY_PATH" ]; then
   echo "ERROR: MCP binary not found at $BINARY_PATH. Run 'task integration:setup' first." >&2
   exit 1
 fi
+
+# --- MCP Helpers (dual transport) --------------------------------------------
 
 # Counters.
 PASSED=0
@@ -24,7 +34,7 @@ FAILED=0
 SKIPPED=0
 TOTAL=0
 
-# Temp dir for FIFOs and state.
+# Temp dir for FIFOs / SSE stream / state.
 TMPDIR=$(mktemp -d)
 trap 'cleanup' EXIT
 
@@ -33,14 +43,17 @@ cleanup() {
   rm -rf "$TMPDIR"
 }
 
-# --- Stdio MCP Helpers -------------------------------------------------------
+SERVER_PID=""
+MCP_ENDPOINT=""
 
-# FIFOs for communicating with the server process.
+# ===========================================================================
+# stdio transport: FIFO-based subprocess communication
+# ===========================================================================
+if [ "$TRANSPORT_MODE" = "stdio" ]; then
+
 STDIN_FIFO="$TMPDIR/stdin"
 STDOUT_FIFO="$TMPDIR/stdout"
 mkfifo "$STDIN_FIFO" "$STDOUT_FIFO"
-
-SERVER_PID=""
 
 # Start the MCP server as a background subprocess.
 mcp_connect() {
@@ -100,6 +113,96 @@ mcp_request() {
   echo '{"error":{"code":-1,"message":"EOF reading from server"}}' >&2
   return 1
 }
+
+# ===========================================================================
+# SSE transport: curl-based HTTP/SSE communication
+# ===========================================================================
+else
+
+SSE_STREAM="$TMPDIR/sse_stream"
+SSE_PID=""
+
+mcp_connect() {
+  # Start SSE stream reader in background.
+  curl -sN "$MCP_BASE_URL/sse" > "$SSE_STREAM" 2>/dev/null &
+  SSE_PID=$!
+
+  # Wait for the endpoint event (first data: line in the stream).
+  local attempts=0
+  while [ "$attempts" -lt 100 ]; do
+    MCP_ENDPOINT=$(grep "^data:" "$SSE_STREAM" 2>/dev/null | head -1 | sed 's/^data:[ ]*//')
+    if [ -n "$MCP_ENDPOINT" ]; then
+      # If endpoint is relative, prepend base URL.
+      case "$MCP_ENDPOINT" in
+        http*) ;;
+        *) MCP_ENDPOINT="$MCP_BASE_URL$MCP_ENDPOINT" ;;
+      esac
+      return 0
+    fi
+    sleep 0.1
+    attempts=$((attempts + 1))
+  done
+
+  echo "ERROR: Failed to get SSE endpoint from $MCP_BASE_URL/sse" >&2
+  return 1
+}
+
+mcp_disconnect() {
+  if [ -n "$SSE_PID" ]; then
+    kill "$SSE_PID" 2>/dev/null || true
+    wait "$SSE_PID" 2>/dev/null || true
+    SSE_PID=""
+  fi
+}
+
+# Send a JSON-RPC message (POST). Used for notifications (no response expected).
+mcp_send() {
+  curl -s -X POST -H "Content-Type: application/json" -d "$1" "$MCP_ENDPOINT" >/dev/null 2>&1
+}
+
+# Send a JSON-RPC request and wait for the response with matching id.
+# The response arrives on the SSE stream (not the POST response body).
+# Usage: mcp_request <method> <params_json> [id]
+mcp_request() {
+  local method="$1"
+  local params="${2:-null}"
+  local id="${3:-1}"
+
+  local body
+  body=$(jq -n --arg method "$method" --argjson params "$params" --argjson id "$id" \
+    '{"jsonrpc":"2.0","method":$method,"params":$params,"id":$id}')
+
+  # Record current stream size to only search new data.
+  local offset
+  offset=$(wc -c < "$SSE_STREAM" 2>/dev/null || echo 0)
+
+  # POST the request (response comes on the SSE stream, not the POST body).
+  curl -s -X POST -H "Content-Type: application/json" -d "$body" "$MCP_ENDPOINT" >/dev/null 2>&1
+
+  # Poll the SSE stream for a response with matching id.
+  local attempts=0
+  while [ "$attempts" -lt 200 ]; do
+    local resp
+    resp=$(tail -c +"$((offset + 1))" "$SSE_STREAM" 2>/dev/null \
+      | grep "^data:" \
+      | sed 's/^data:[ ]*//' \
+      | jq -e --argjson id "$id" 'select(.id == $id)' 2>/dev/null \
+      | tail -1 || true)
+
+    if [ -n "$resp" ] && [ "$resp" != "null" ]; then
+      echo "$resp"
+      return 0
+    fi
+    sleep 0.1
+    attempts=$((attempts + 1))
+  done
+
+  echo '{"error":{"code":-1,"message":"Timeout waiting for SSE response"}}' >&2
+  return 1
+}
+
+fi
+# === End transport-specific helpers ==========================================
 
 # Initialize MCP session.
 mcp_initialize() {
@@ -1038,11 +1141,15 @@ test_list_module_releases_empty_module_name() {
 
 main() {
   echo "========================================"
-  echo "Deckhouse MCP Integration Tests (stdio)"
+  echo "Deckhouse MCP Integration Tests ($TRANSPORT_MODE)"
   echo "========================================"
-  echo "Binary: $BINARY_PATH"
+  if [ "$TRANSPORT_MODE" = "stdio" ]; then
+    echo "Binary: $BINARY_PATH"
+    echo "Stderr log: $STDERR_LOG"
+  else
+    echo "Base URL: $MCP_BASE_URL"
+  fi
   echo "Kube context: $KUBE_CONTEXT"
-  echo "Stderr log: $STDERR_LOG"
   echo ""
 
   echo "Starting MCP server..."

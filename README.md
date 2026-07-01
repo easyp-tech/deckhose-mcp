@@ -88,6 +88,47 @@ task test
 ./deckhouse-harness
 ```
 
+## Transport Modes
+
+The server supports two transport modes, selectable via the `TRANSPORT` env var or CLI flags:
+
+### stdio (default)
+
+Local process mode — newline-delimited JSON on stdin/stdout. Used by MCP clients like Claude Desktop, Cursor, and `mcp` CLI. Logs go to stderr.
+
+```bash
+./deckhouse-harness                    # stdio mode (default)
+TRANSPORT=stdio ./deckhouse-harness    # explicit
+```
+
+### SSE (HTTP)
+
+SSE transport for in-cluster deployment or remote access. Uses `mcp.NewSSEHandler` + `http.Server` with graceful shutdown. Multiple clients can connect concurrently.
+
+```bash
+TRANSPORT=sse ./deckhouse-harness                           # SSE on :8080
+TRANSPORT=sse LISTEN_ADDR=:9090 ./deckhouse-harness         # SSE on :9090
+./deckhouse-harness -listen :8080                           # via CLI flag
+```
+
+### In-Cluster Deployment (SSE)
+
+Docker image and Kubernetes manifests are provided for deploying the server inside a cluster (e.g. in the `d8-system` namespace alongside Deckhouse):
+
+```bash
+# Build and load into Kind
+task docker:build
+task docker:load
+
+# Deploy
+kubectl apply -f deploy/rbac.yaml -f deploy/deployment.yaml -f deploy/service.yaml
+
+# Port-forward for local testing
+kubectl port-forward svc/deckhouse-mcp 8080:8080 -n d8-system
+```
+
+The Deployment sets `TRANSPORT=sse` and uses in-cluster config for Kubernetes auth. See `deploy/` for manifests (Deployment, Service, RBAC).
+
 ## Connecting an MCP Client
 
 By default the server uses **stdio transport**. Configure your MCP client to launch the binary.
@@ -134,8 +175,9 @@ echo '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `TRANSPORT` | `stdio` | Transport mode: `stdio` (local) or `sse` (HTTP in-cluster). If empty, auto-selects based on `LISTEN_ADDR`. |
+| `LISTEN_ADDR` | `:8080` | SSE listen address (only when `TRANSPORT=sse` or `LISTEN_ADDR` is set) |
 | `KUBECONFIG` | `~/.kube/config` | Path to kubeconfig file (or in-cluster config when running inside a Pod) |
-| `LISTEN_ADDR` | (empty) | If set (e.g. `:8080`), run in **SSE transport** mode. Both `-listen` flag and `LISTEN_ADDR` env are supported (CLI flag wins). See `--help` for full flag/env hints. |
 | `LOG_LEVEL` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARN`, `ERROR` |
 | `LOG_OUTPUT` | `stderr` | Log destination: `stderr`, `file`, `discard` |
 | `LOG_FILE` | — | Log file path (required when `LOG_OUTPUT=file`) |
@@ -153,6 +195,8 @@ task generate        # easyp mod download + easyp generate
 task lint            # easyp lint
 task build           # go build -o deckhouse-harness ./cmd/deckhouse-harness
 task test            # go test ./...
+task docker:build    # build Docker image (deckhouse-mcp:local)
+task docker:load     # load Docker image into Kind cluster
 task integration     # full integration test cycle (requires Kind)
 ```
 
@@ -207,10 +251,12 @@ proto/deckhouse/v1/          # .proto files — single source of truth
 ├── nodes.proto              # NodesAPI (13 RPCs)
 ├── config.proto             # ConfigAPI (3 RPCs)
 └── sources.proto            # SourcesAPI (6 RPCs)
-cmd/deckhouse-harness/main.go    # dual-mode entrypoint (stdio default, SSE via LISTEN_ADDR)
+cmd/deckhouse-harness/main.go    # dual-mode entrypoint (stdio default, SSE via TRANSPORT/LISTEN_ADDR)
 internal/handler/            # Tool handler implementations
 internal/k8s/client.go       # Kubernetes client interface
-tests/integration/           # Integration tests (Kind + Deckhouse CE)
+deploy/                      # Kubernetes manifests (Deployment, Service, RBAC)
+Dockerfile                   # Multi-stage build (golang:1.26 → distroless)
+tests/integration/           # Integration tests (Kind + Deckhouse CE, dual transport)
 Taskfile.yml                 # Build tasks (go-task)
 easyp.yaml                   # Proto config
 ```

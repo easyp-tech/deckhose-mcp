@@ -13,35 +13,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Dual-mode server.** The binary now supports both transports:
   - **stdio** (default): `server.Run(ctx, &mcp.StdioTransport{})` — for local clients (Claude Desktop, etc.).
-  - **SSE** (HTTP): activated by `LISTEN_ADDR` env var, `-listen :8080` flag, or `-transport sse`. Uses `mcp.NewSSEHandler` + `http.Server` with graceful shutdown.
+  - **SSE** (HTTP): activated by `TRANSPORT=sse` env var, `LISTEN_ADDR` env var, `-listen :8080` flag, or `-transport sse`. Uses `mcp.NewSSEHandler` + `http.Server` with graceful shutdown.
 - CLI flags: `-listen <addr>` and `-transport (stdio|sse)`.
 - Switched to `urfave/cli/v3` for flag + environment variable handling (`Sources: cli.EnvVars(...)`). `--help` now annotates env vars. Manual fallback code removed.
-- `LISTEN_ADDR` (and new `TRANSPORT`/`MCP_TRANSPORT`) continue to work; CLI flag wins.
+- `TRANSPORT` (and `MCP_TRANSPORT`) / `LISTEN_ADDR` continue to work; CLI flag wins.
 - `serveSSE()` helper that reuses a single `*mcp.Server` for multiple concurrent SSE sessions.
+- Constants: `defaultListenAddr=":8080"`, `shutdownTimeout=10s`, `readHeaderTimeout=5s`.
+- **Restored**: `deploy/` manifests (`deployment.yaml`, `service.yaml`, `rbac.yaml`) for SSE in-cluster deployment in `d8-system` namespace.
+- **Restored**: `Dockerfile` (multi-stage: `golang:1.26` → `gcr.io/distroless/static-debian12`).
+- **Restored**: `docker:build` and `docker:load` tasks in `Taskfile.yml`.
+- Integration tests now support both transport modes via `TRANSPORT` env var: `TRANSPORT=stdio` (default) uses FIFO helpers; `TRANSPORT=sse` uses curl-based SSE helpers with Docker image + Kind deployment + port-forward.
 
 ### Changed
 
 - `main.go` now decides the transport at startup instead of hard-coding stdio.
-- Updated docs (README, AGENTS.md) to describe dual transport.
+- `serveSSE()` now uses `ReadHeaderTimeout=5s` and `shutdownTimeout=10s` (was 5s).
+- Updated docs (README, AGENTS.md) to describe dual transport and in-cluster deployment.
 - `go.mod` already uses MCP SDK v1.6.0 (which includes maintained SSE support).
+- Version bumped `0.3.0` → `0.3.1`.
 
 ### Notes
 
 - Stdio remains the default so existing local client configs are unaffected.
 - When running in SSE mode, multiple MCP clients can connect simultaneously.
-- **Docker image and Kubernetes manifests removed.** `Dockerfile` and `deploy/` (deployment.yaml, service.yaml, rbac.yaml) deleted. The server is a local CLI tool.
 - **K8s auth: kubeconfig fallback.** `loadKubeConfig()` tries `rest.InClusterConfig()` first (in-cluster), then falls back to `clientcmd` (`KUBECONFIG` env or `~/.kube/config`).
 - **Logging via env.** `LOG_LEVEL` (DEBUG/INFO/WARN/ERROR), `LOG_OUTPUT` (stderr/file/discard), `LOG_FILE` (path). Logs never go to stdout (reserved for MCP protocol).
 
 ### Infrastructure
 
 - `protoc-gen-mcp` upgraded v0.3.1 → v0.5.0 (`easyp.yaml`, `go.mod`, `easyp.lock`)
-- `cmd/deckhouse-harness/main.go` rewritten: `loadKubeConfig()`, `configureLogger()`, `server.Run(ctx, &mcp.StdioTransport{})`
-- `Taskfile.yml`: `docker:build` and `docker:load` tasks removed; `build` now outputs `./deckhouse-harness`
-- `tests/integration/setup.sh`: no Docker build/load, no kubectl apply deploy, no port-forward; builds local binary
-- `tests/integration/test.sh`: SSE/curl helpers replaced with FIFO-based stdio transport (`mcp_connect`/`mcp_disconnect`/`mcp_send`/`mcp_recv`); all 58 test cases unchanged
-- `tests/integration/teardown.sh`: port-forward cleanup removed; binary cleanup added
-- `README.md` and `AGENTS.md` updated for stdio transport and env-based logging
+- `cmd/deckhouse-harness/main.go` rewritten: `loadKubeConfig()`, `configureLogger()`, dual-mode `run()` with `serveSSE()`
+- `Taskfile.yml`: `docker:build` and `docker:load` tasks restored; `build` outputs `./deckhouse-harness`; `IMAGE_NAME=deckhouse-mcp` for Docker
+- `tests/integration/setup.sh`: dual-mode — stdio builds local binary; SSE builds Docker image, loads into Kind, applies `deploy/`, starts port-forward
+- `tests/integration/test.sh`: dual-mode helpers — stdio uses FIFO (`mcp_connect`/`mcp_disconnect`/`mcp_send`/`mcp_recv`); SSE uses curl (`curl -sN` for SSE stream, `curl -X POST` for requests); all 58 test cases unchanged
+- `tests/integration/teardown.sh`: dual-mode cleanup — stdio removes binary; SSE kills port-forward, optionally deletes deployment
+- `README.md` and `AGENTS.md` updated for dual transport, in-cluster deployment, and env-based logging
 
 ---
 

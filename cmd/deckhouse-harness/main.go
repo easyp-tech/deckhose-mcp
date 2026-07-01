@@ -35,8 +35,12 @@ import (
 
 const (
 	serverImplName        = "deckhouse-harness"
-	serverImplVersion     = "0.3.0"
+	serverImplVersion     = "0.3.1"
 	serverImplDescription = "Deckhouse Kubernetes Platform MCP server"
+
+	defaultListenAddr = ":8080"
+	shutdownTimeout   = 10 * time.Second
+	readHeaderTimeout = 5 * time.Second
 )
 
 func main() {
@@ -103,7 +107,7 @@ func run(c *cli.Command) error {
 
 	if useSSE {
 		if listenAddr == "" {
-			listenAddr = ":8080"
+			listenAddr = defaultListenAddr
 		}
 		return serveSSE(ctx, server, listenAddr, logger)
 	}
@@ -231,15 +235,16 @@ func serveSSE(ctx context.Context, srv *mcp.Server, addr string, logger *slog.Lo
 	}, nil)
 
 	httpSrv := &http.Server{
-		Addr:    addr,
-		Handler: handler,
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
 	// Trigger shutdown when the context is cancelled (e.g. SIGINT/SIGTERM).
 	go func() {
 		<-ctx.Done()
 		logger.Info("shutting down SSE server", "addr", addr)
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 			logger.Error("http server shutdown error", "error", err)

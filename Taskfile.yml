@@ -2,6 +2,7 @@ version: "3"
 
 vars:
   BINARY_NAME: deckhouse-harness
+  IMAGE_NAME: deckhouse-mcp
   NAMESPACE: d8-system
 
 tasks:
@@ -40,6 +41,16 @@ tasks:
     desc: Tear down integration test environment
     cmds:
       - bash tests/integration/teardown.sh
+
+  docker:build:
+    desc: Build Docker image
+    cmds:
+      - docker build -t {{.IMAGE_NAME}}:local .
+
+  docker:load:
+    desc: Load Docker image into Kind cluster
+    cmds:
+      - kind load docker-image {{.IMAGE_NAME}}:local --name d8
 
   integration:
     desc: Run full integration test cycle
