@@ -737,6 +737,12 @@ func (h *DiagnosticsHandler) collectNodeSummary(ctx context.Context) (*pb.NodeSu
 func (h *DiagnosticsHandler) collectNodeGroupStatuses(ctx context.Context) ([]*pb.NodeGroupStatus, error) {
 	nodeGroups, err := h.client.ListNodeGroups(ctx)
 	if err != nil {
+		// node-manager is optional: when it is disabled the nodegroups CRD is
+		// absent. Degrade to an empty node-group list rather than failing the
+		// whole cluster status.
+		if k8s.IsCRDNotRegistered(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("listing node groups: %w", err)
 	}
 

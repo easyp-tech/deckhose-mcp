@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/easyp-tech/deckhouse-harness/internal/k8s"
 	pb "github.com/easyp-tech/deckhouse-harness/proto/deckhouse/v1"
@@ -46,7 +47,14 @@ func (h *ModulesHandler) ListModuleConfigs(
 	for _, moduleConfig := range configs {
 		name := unstructuredNestedString(moduleConfig.Object, "metadata", "name")
 		enabled, _ := nestedField(moduleConfig.Object, "spec", "enabled")
+		// spec.version is an integer in the CR; read it as int64 and render as a
+		// string. Fall back to a string value if some source stores it as text.
 		version := unstructuredNestedString(moduleConfig.Object, "spec", "version")
+		if version == "" {
+			if v := unstructuredNestedInt64(moduleConfig.Object, "spec", "version"); v != 0 {
+				version = strconv.FormatInt(v, 10)
+			}
+		}
 		source := unstructuredNestedString(moduleConfig.Object, "status", "source")
 		updatePolicy := unstructuredNestedString(moduleConfig.Object, "status", "updatePolicy")
 		statusMsg := unstructuredNestedString(moduleConfig.Object, "status", "message")

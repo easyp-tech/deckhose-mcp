@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -158,31 +160,58 @@ func (c *client) ListPods(ctx context.Context, namespace string) ([]corev1.Pod, 
 	return list.Items, nil
 }
 
+// IsCRDNotRegistered reports whether err indicates that a Deckhouse CRD is not
+// installed in the cluster — typically because its owning module (e.g.
+// node-manager) is disabled. Callers can use this to degrade gracefully instead
+// of failing a whole aggregate operation.
+func IsCRDNotRegistered(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	return kerrors.IsNotFound(err) ||
+		strings.Contains(err.Error(), "could not find the requested resource")
+}
+
 // ListNodeGroups returns all NodeGroup resources.
+//
+// Errors are returned without an operation prefix; the calling handler adds one
+// ("listing node groups: %w") so the message is not wrapped twice.
 func (c *client) ListNodeGroups(ctx context.Context) ([]unstructured.Unstructured, error) {
 	list, err := c.dynamic.Resource(NodeGroupGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("listing node groups: %w", err)
+		// Make the common "CRD not installed" case more actionable for users.
+		if IsCRDNotRegistered(err) {
+			return nil, fmt.Errorf("CRD deckhouse.io/v1/nodegroups not registered (is node-manager module enabled?): %w", err)
+		}
+		return nil, err
 	}
 
 	return list.Items, nil
 }
 
 // ListStaticInstances returns all StaticInstance resources.
+//
+// Errors are returned without an operation prefix; the calling handler adds one.
 func (c *client) ListStaticInstances(ctx context.Context) ([]unstructured.Unstructured, error) {
 	list, err := c.dynamic.Resource(StaticInstanceGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("listing static instances: %w", err)
+		if IsCRDNotRegistered(err) {
+			return nil, fmt.Errorf("CRD deckhouse.io/v1alpha2/staticinstances not registered (is node-manager module enabled?): %w", err)
+		}
+		return nil, err
 	}
 
 	return list.Items, nil
 }
 
 // GetStaticInstance returns a single StaticInstance by name.
+//
+// The error is returned unwrapped; the calling handler adds the operation prefix.
 func (c *client) GetStaticInstance(ctx context.Context, name string) (*unstructured.Unstructured, error) {
 	obj, err := c.dynamic.Resource(StaticInstanceGVR).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("getting static instance %q: %w", name, err)
+		return nil, err
 	}
 
 	return obj, nil
