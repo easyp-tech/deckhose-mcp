@@ -1,5 +1,5 @@
-<!-- generated: 2026-05-12, template: bootstrap.md -->
-# Agent Rules — Deckhouse MCP Server
+<!-- generated: 2026-07-07, template: bootstrap.md -->
+# Agent Rules — Deckhouse Harness
 
 Mandatory rules for AI agents working on this project.
 
@@ -31,12 +31,12 @@ Mandatory rules for AI agents working on this project.
 ## Testing
 
 - Use standard `testing` package only — no testify, gomock, or other frameworks
-- Mock `k8s.Client` via `mockClient` struct in `mock_client_test.go` (17 function fields, nil = no-op)
+- Mock `k8s.Client` via `mockClient` struct in `mock_client_test.go` (36 function fields, nil = no-op)
 - Test files are in the same package (`package handler`)
 - Table-driven tests via `map[string]struct{ ... }` or named `[]struct` slices
-- Polling tests (`AddWorkerNode`, `WaitNodeReady`) use real `time.Sleep` — expected to be slow (~30s each)
+- Polling tests (`AddWorkerNode`, `WaitNodeReady`, `DrainNode`) use a real 30s clock — expected to be slow (~30s each)
 - Always add `var _ k8s.Client = (*mockClient)(nil)` compile-time check when adding methods to mock
-- Total: 70 unit tests, ~120s runtime
+- Total: 134 unit tests, ~3 min runtime
 
 ## Dependencies
 
@@ -67,10 +67,10 @@ Mandatory rules for AI agents working on this project.
 - After adding any K8s operation, update `deploy/rbac.yaml` with the minimum required permissions
 - Use least-privilege: add only the specific verbs needed (get/list/create/update/patch/delete)
 - Never add wildcard verbs (`*`) or wildcard resources
-- Current RBAC covers P0 + P1 handlers — expand for P2+ as needed
+- Current RBAC in `deploy/rbac.yaml` covers all 43 tools (P0–P3) — expand `deploy/rbac.yaml` with least-privilege permissions for the resources each new tool touches
 
 ## Handler Registration
 
-- Handlers are auto-registered via generated `pb.Register{Service}Tools()` — 5 calls in `main.go`
+- Handlers are auto-registered via generated `pb.Register{Service}Tools()` — 6 calls in `main.go`
 - Do NOT manually register tools — always go through the generated registration function
-- Currently registered: `DiagnosticsAPI`, `ModulesAPI`, `ReleasesAPI`, `NodesAPI`, `ConfigAPI`
+- Currently registered: `DiagnosticsAPI`, `ModulesAPI`, `ReleasesAPI`, `NodesAPI`, `ConfigAPI`, `SourcesAPI` (43 tools across 6 services)

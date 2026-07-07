@@ -1,24 +1,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: deckhouse-mcp
+  name: deckhouse-harness
   namespace: d8-system
   labels:
-    app: deckhouse-mcp
+    app: deckhouse-harness
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: deckhouse-mcp
+      app: deckhouse-harness
   template:
     metadata:
       labels:
-        app: deckhouse-mcp
+        app: deckhouse-harness
     spec:
-      serviceAccountName: deckhouse-mcp
+      serviceAccountName: deckhouse-harness
       containers:
-        - name: deckhouse-mcp
-          image: deckhouse-mcp:local
+        - name: deckhouse-harness
+          image: deckhouse-harness:local
           imagePullPolicy: Never
           env:
             - name: TRANSPORT

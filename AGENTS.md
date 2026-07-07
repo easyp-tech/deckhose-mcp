@@ -1,8 +1,10 @@
-# Deckhouse MCP Server
+# Deckhouse Harness
 
 MCP server for managing [Deckhouse Kubernetes Platform](https://deckhouse.ru/docs) (Community Edition).
 **Dual transport** — stdio (default) or SSE over HTTP. Stdio: local newline-delimited JSON. SSE: `LISTEN_ADDR=:8080` or `-listen :8080` starts `mcp.NewSSEHandler` + HTTP server.
 Authenticates to Kubernetes via in-cluster config (inside a Pod) or `~/.kube/config` / `KUBECONFIG` (local).
+
+Binary and module name: `deckhouse-harness` (project was renamed from `deckhouse-mcp`). Server version: `0.3.1`.
 
 ## Tech Stack
 
@@ -19,14 +21,14 @@ Authenticates to Kubernetes via in-cluster config (inside a Pod) or `~/.kube/con
 ```
 proto/                           # .proto files — single source of truth for all MCP tools
 ├── deckhouse/v1/                # services, messages, generated code
-│   ├── diagnostics.proto        # Block A: DiagnosticsAPI (5 RPCs, read-only)
+│   ├── diagnostics.proto        # Block A: DiagnosticsAPI (11 RPCs, read-only)
 │   ├── diagnostics.pb.go        # generated: protobuf types
 │   ├── diagnostics.mcp.go       # generated: MCP tool handler interface + registration
-│   ├── modules.proto            # Block B: ModulesAPI (1 RPC)
-│   ├── releases.proto           # Block C: ReleasesAPI (1 RPC)
-│   ├── nodes.proto              # Block D: NodesAPI (3 RPCs, write)
-│   ├── config.proto             # Block E: ConfigAPI (stub, no RPCs yet)
-│   └── sources.proto            # Block F: SourcesAPI (stub, no RPCs yet)
+│   ├── modules.proto            # Block B: ModulesAPI (7 RPCs)
+│   ├── releases.proto           # Block C: ReleasesAPI (3 RPCs)
+│   ├── nodes.proto              # Block D: NodesAPI (13 RPCs, write)
+│   ├── config.proto             # Block E: ConfigAPI (3 RPCs)
+│   └── sources.proto            # Block F: SourcesAPI (6 RPCs)
 cmd/
 └── deckhouse-harness/
     └── main.go                  # Dual-mode (stdio default + SSE via TRANSPORT=sse / LISTEN_ADDR / -listen)
@@ -45,33 +47,20 @@ easyp.yaml                       # Proto deps, lint rules, codegen plugins
 
 ## Implementation Status
 
-### Implemented (P0 — MVP, 10 handlers)
+All **43 tools across 6 services are implemented** and registered in `cmd/deckhouse-harness/main.go`. Each handler file in `internal/handler/` implements the full generated `*ToolHandler` interface for its service.
 
-| Handler | Block | Proto RPC | Type |
-|---------|-------|-----------|------|
-| `GetClusterStatus` | A: Diagnostics | `DiagnosticsAPI.GetClusterStatus` | read-only |
-| `ListNodes` | A: Diagnostics | `DiagnosticsAPI.ListNodes` | read-only |
-| `ListNodeGroups` | A: Diagnostics | `DiagnosticsAPI.ListNodeGroups` | read-only |
-| `ListStaticInstances` | A: Diagnostics | `DiagnosticsAPI.ListStaticInstances` | read-only |
-| `ListUnhealthyPods` | A: Diagnostics | `DiagnosticsAPI.ListUnhealthyPods` | read-only |
-| `ListModuleConfigs` | B: Modules | `ModulesAPI.ListModuleConfigs` | read-only |
-| `ListDeckhouseReleases` | C: Releases | `ReleasesAPI.ListDeckhouseReleases` | read-only |
-| `CreateSSHCredentials` | D: Nodes | `NodesAPI.CreateSSHCredentials` | write |
-| `CreateStaticInstance` | D: Nodes | `NodesAPI.CreateStaticInstance` | write |
-| `AddWorkerNode` | D: Nodes | `NodesAPI.AddWorkerNode` | write (composite) |
+| Block | Handler file | Service | RPCs | Type |
+|-------|--------------|---------|:----:|------|
+| A: Diagnostics | `diagnostics.go` | `DiagnosticsAPI` | 11 | read-only |
+| B: Modules | `modules.go` | `ModulesAPI` | 7 | read + write |
+| C: Releases | `releases.go` | `ReleasesAPI` | 3 | read + write (approve) |
+| D: Nodes | `nodes.go` | `NodesAPI` | 13 | write (incl. composite) |
+| E: Config | `config.go` | `ConfigAPI` | 3 | read + write |
+| F: Sources | `sources.go` | `SourcesAPI` | 6 | read + write |
 
-### Not Yet Implemented
+Full tool-by-tool listing (with descriptions) lives in [README.md](README.md#features). SDD spec artifacts per priority tier: [`.spec/features/`](.spec/features/) — `p1-core-operations`, `p2-advanced-management`, `p3-edge-cases`.
 
-Full spec: [mcp-handlers-full.md](mcp-handlers-full.md). Next priority: P1 → P2 → P3.
-
-| Block | Purpose | P0 | P1 | P2 | P3 |
-|-------|---------|----|----|----|----|
-| A: Diagnostics | read-only cluster status, nodes, pods, logs | ✅ 4 | 2 | 4 | 1 |
-| B: Modules | ModuleConfig CRUD, enable/disable | ✅ 1 | 3 | 2 | 1 |
-| C: Releases | DeckhouseRelease, approve | ✅ 1 | 2 | — | — |
-| D: Nodes | StaticInstance, SSHCredentials, drain/cordon, NodeGroup | ✅ 4 | 4 | 4 | 1 |
-| E: Configuration | ClusterConfiguration, K8s version | — | 1 | 2 | — |
-| F: Sources | ModuleSource, ModuleUpdatePolicy | — | — | 4 | 2 |
+Composite (multi-step) handlers in `nodes.go`: `AddWorkerNode` (SSHCredentials → StaticInstance → poll until Running), `RemoveNode` (drain → delete StaticInstance), `DrainNode` (cordon + PDB-aware eviction loop).
 
 ## Build & Generate
 
@@ -91,7 +80,7 @@ easyp generate
 # Build
 go build -o deckhouse-harness ./cmd/deckhouse-harness
 
-# Test (38 tests, ~60s due to polling tests)
+# Test (134 tests, ~3 min due to real-time polling tests)
 go test ./...
 
 # All-in-one via Taskfile (go-task)
@@ -99,8 +88,8 @@ task generate        # easyp mod download && easyp generate
 task lint            # easyp lint
 task build           # go build -o deckhouse-harness ./cmd/deckhouse-harness
 task test            # go test ./...
-task docker:build    # docker build -t deckhouse-mcp:local .
-task docker:load     # kind load docker-image deckhouse-mcp:local --name d8
+task docker:build    # docker build -t deckhouse-harness:local .
+task docker:load     # kind load docker-image deckhouse-harness:local --name d8
 task integration     # setup → test → teardown
 ```
 
@@ -130,23 +119,28 @@ task integration     # setup → test → teardown
 
 ### K8s Client Interface
 
+The full `Client` interface lives in `internal/k8s/client.go` and exposes 36 methods (11 core + 25 CRD) split into two groups. Core resources use the typed `kubernetes.Interface`; Deckhouse CRDs use the `dynamic.Interface` and return `unstructured.Unstructured`.
+
 ```go
 type Client interface {
-    ListNodes(ctx context.Context) ([]corev1.Node, error)
-    ListPods(ctx context.Context, namespace string) ([]corev1.Pod, error)
-    ListNodeGroups(ctx context.Context) ([]unstructured.Unstructured, error)
-    ListStaticInstances(ctx context.Context) ([]unstructured.Unstructured, error)
-    GetStaticInstance(ctx context.Context, name string) (*unstructured.Unstructured, error)
-    CreateStaticInstance(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error)
-    ListModuleConfigs(ctx context.Context) ([]unstructured.Unstructured, error)
-    ListDeckhouseReleases(ctx context.Context) ([]unstructured.Unstructured, error)
-    CreateSSHCredentials(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error)
+    // Core resources (typed): nodes, pods, events, secrets.
+    ListNodes / GetNode / CordonNode / UncordonNode
+    ListPods / DeletePod / EvictPod / ListNodeEvents / GetPodLogs
+    GetSecret / UpdateSecret
+
+    // Deckhouse CRDs (dynamic/unstructured):
+    //   NodeGroup, StaticInstance, SSHCredentials, ModuleConfig,
+    //   DeckhouseRelease, Module, ModuleSource, ModuleUpdatePolicy,
+    //   ModuleRelease, NodeGroupConfiguration
+    // — with List/Get/Create/Update/Patch/Delete as each handler needs.
 }
 ```
 
-New methods should be added to this interface when implementing P1+ handlers.
+When adding a new tool, add the K8s operation here (never call the typed/dynamic clients directly from a handler) and extend the mock in `internal/handler/mock_client_test.go` (function-field mock).
 
 ### CRD GVR Constants
+
+Defined as package-level vars in `internal/k8s/client.go`:
 
 | CRD | Group | Version | Resource (plural) |
 |-----|-------|---------|-------------------|
@@ -154,7 +148,14 @@ New methods should be added to this interface when implementing P1+ handlers.
 | StaticInstance | deckhouse.io | v1alpha2 | staticinstances |
 | SSHCredentials | deckhouse.io | v1alpha2 | sshcredentials |
 | ModuleConfig | deckhouse.io | v1alpha1 | moduleconfigs |
-| DeckhouseRelease | deckhouse.io | v1alpha1 | deckhouserelease |
+| DeckhouseRelease | deckhouse.io | v1alpha1 | deckhousereleases |
+| Module | deckhouse.io | v1alpha1 | modules |
+| ModuleSource | deckhouse.io | v1alpha1 | modulesources |
+| ModuleUpdatePolicy | deckhouse.io | v1alpha1 | moduleupdatepolicies |
+| ModuleRelease | deckhouse.io | v1alpha1 | modulereleases |
+| NodeGroupConfiguration | deckhouse.io | v1alpha1 | nodegroupconfigurations |
+
+`ListNodeGroups` / `ListStaticInstances` special-case the "CRD not registered" error (e.g. node-manager module disabled) into an actionable message.
 
 ### Server Entrypoint (`cmd/deckhouse-harness/main.go`)
 
@@ -185,14 +186,14 @@ When `TRANSPORT=sse` and running inside a Kubernetes Pod (in-cluster config), th
 
 ### Testing
 
-- 38 unit tests across 5 test files in `internal/handler/`
-- Mock `k8s.Client` with function fields (no external mock library)
-- `AddWorkerNode` polling tests use mock with `time.Sleep` — each takes ~30s
-- Total test time: ~60s
+- 134 unit tests across the `*_test.go` files in `internal/handler/`
+- Mock `k8s.Client` with function fields in `mock_client_test.go` (no external mock library)
+- Polling handlers (`AddWorkerNode`, `WaitNodeReady`, `DrainNode`) use the real clock (`pollInterval = 30s`), so their tests genuinely sleep
+- Total test time: ~3 min (`go test ./...`)
 
 ## Skills (`.agents/skills/`)
 
-Three agent skills are installed in the project. Each is auto-invoked by keyword match.
+Four agent skills are installed in the project. Each is auto-invoked by keyword match: `protobuf-expert-skill`, `protoc-gen-mcp-skill`, `sdd`, `e2e-test-deckhouse-harness`.
 
 ### protobuf-expert-skill
 

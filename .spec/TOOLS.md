@@ -1,5 +1,5 @@
-<!-- generated: 2026-04-14, template: development.md -->
-# Tools & Commands — Deckhouse MCP Server
+<!-- generated: 2026-07-07, template: development.md -->
+# Tools & Commands — Deckhouse Harness
 
 ## 0. Dev Environment Setup
 
@@ -88,7 +88,7 @@ task test
 go test ./...
 ```
 
-Runs all 38 unit tests. Total time ~60s due to `AddWorkerNode` polling tests (each ~30s).
+Runs all 134 unit tests. Total time ~3 min due to polling tests `AddWorkerNode`, `WaitNodeReady`, and `DrainNode`, which use a real 30s clock (each ~30s).
 
 To run a specific test:
 ```bash

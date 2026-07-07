@@ -1,5 +1,5 @@
-<!-- generated: 2026-05-12, template: core.md -->
-# Code Style — Deckhouse MCP Server
+<!-- generated: 2026-07-07, template: core.md -->
+# Code Style — Deckhouse Harness
 
 Project-specific Go and Proto conventions beyond standard `gofmt`.
 
@@ -147,7 +147,7 @@ Function fields, nil = no-op:
 ```go
 type mockClient struct {
     listNodesFunc func(ctx context.Context) ([]corev1.Node, error)
-    // ... 17 function fields total ...
+    // ... 36 function fields total ...
 }
 
 func (m *mockClient) ListNodes(ctx context.Context) ([]corev1.Node, error) {
@@ -173,4 +173,4 @@ var _ k8s.Client = (*mockClient)(nil)
 Always in `mock_client_test.go`.
 
 ### Polling test expectations
-Tests for `AddWorkerNode` and `WaitNodeReady` use real `time.Sleep` — expected to be slow (~30s each). Tests total ~120s.
+Tests for `AddWorkerNode`, `WaitNodeReady`, and `DrainNode` use a real 30s clock — expected to be slow (~30s each). The full suite is 134 unit tests, total ~3 min.

@@ -124,7 +124,7 @@ task docker:load
 kubectl apply -f deploy/rbac.yaml -f deploy/deployment.yaml -f deploy/service.yaml
 
 # Port-forward for local testing
-kubectl port-forward svc/deckhouse-mcp 8080:8080 -n d8-system
+kubectl port-forward svc/deckhouse-harness 8080:8080 -n d8-system
 ```
 
 The Deployment sets `TRANSPORT=sse` and uses in-cluster config for Kubernetes auth. See `deploy/` for manifests (Deployment, Service, RBAC).
@@ -195,7 +195,7 @@ task generate        # easyp mod download + easyp generate
 task lint            # easyp lint
 task build           # go build -o deckhouse-harness ./cmd/deckhouse-harness
 task test            # go test ./...
-task docker:build    # build Docker image (deckhouse-mcp:local)
+task docker:build    # build Docker image (deckhouse-harness:local)
 task docker:load     # load Docker image into Kind cluster
 task integration     # full integration test cycle (requires Kind)
 ```

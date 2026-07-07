@@ -1,5 +1,5 @@
-<!-- generated: 2026-05-12, template: bootstrap.md -->
-# Deckhouse MCP Server — Documentation
+<!-- generated: 2026-07-07, template: bootstrap.md -->
+# Deckhouse Harness — Documentation
 
 This folder contains documentation to help LLMs and developers quickly understand the project context.
 
@@ -7,7 +7,7 @@ This folder contains documentation to help LLMs and developers quickly understan
 
 ### Core
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — Layered architecture, data flow, key design decisions
-- [PACKAGES.md](./PACKAGES.md) — Reference of all Go packages (5 handler files, 17 k8s.Client methods)
+- [PACKAGES.md](./PACKAGES.md) — Reference of all Go packages (6 handler files, 36 k8s.Client methods)
 - [DOMAIN.md](./DOMAIN.md) — Domain model: Deckhouse CRDs, MCP tools, K8s resources, lifecycle diagrams
 - [CODE_STYLE.md](./CODE_STYLE.md) — Go and Proto conventions specific to this project
 
@@ -16,7 +16,7 @@ This folder contains documentation to help LLMs and developers quickly understan
 - [TESTING.md](./TESTING.md) — Testing conventions, mock pattern, test structure
 
 ### API & Deployment
-- [API.md](./API.md) — MCP tool API reference: 23 tools across 5 service blocks (SSE transport, proto-first)
+- [API.md](./API.md) — MCP tool API reference: 43 tools across 6 service blocks (stdio + SSE transports, proto-first)
 - [DEPLOYMENT.md](./DEPLOYMENT.md) — Docker, Kubernetes manifests, RBAC (P0+P1), rollout
 
 ### Error Handling
@@ -31,22 +31,22 @@ This folder contains documentation to help LLMs and developers quickly understan
 |--------|------------|
 | **Language** | Go 1.26 |
 | **Architecture** | Proto-first MCP server, handler pattern |
-| **API** | MCP over SSE (HTTP), protobuf-defined tools |
+| **API** | MCP over stdio (default) + SSE (HTTP), protobuf-defined tools |
 | **K8s client** | client-go v0.35.3 (typed + dynamic) |
-| **Code generation** | protoc-gen-mcp v0.3.1 + easyp |
+| **Code generation** | protoc-gen-mcp v0.5.0 + easyp |
 | **Deployment** | Kubernetes Pod in `d8-system` namespace |
 | **Auth** | ServiceAccount + ClusterRoleBinding (RBAC) |
-| **Testing** | Standard `testing` package, function-field mocks, 70 unit tests |
-| **Tools implemented** | 23 (P0: 10, P1: 13) — see [ROADMAP.md](../ROADMAP.md) |
+| **Testing** | Standard `testing` package, function-field mocks, 134 unit tests |
+| **Tools implemented** | 43 (all P0–P3 implemented) — see [README.md](../README.md) |
 
 ## Project Structure
 
 ```
 deckhouse-harness/
-├── cmd/deckhouse-harness/    # Entry point — SSE server, wires 5 handler blocks
+├── cmd/deckhouse-harness/    # Entry point (urfave/cli/v3) — stdio + SSE server, wires 6 handler blocks
 ├── internal/
-│   ├── handler/          # MCP tool handler implementations (23 methods)
-│   └── k8s/              # Kubernetes client interface (17 methods) + implementation
+│   ├── handler/          # MCP tool handler implementations (43 tools)
+│   └── k8s/              # Kubernetes client interface (36 methods) + implementation
 ├── proto/deckhouse/v1/   # .proto files (single source of truth) + generated *.pb.go, *.mcp.go
 ├── deploy/               # K8s manifests: Deployment, Service, RBAC
 ├── tests/integration/    # Integration test scripts (Kind cluster)
@@ -64,7 +64,7 @@ task generate   # easyp mod download && easyp generate
 # Build
 task build      # go build ./cmd/deckhouse-harness
 
-# Tests (70 unit tests, ~120s due to polling tests)
+# Tests (134 unit tests, ~3 min due to polling tests)
 task test       # go test ./...
 
 # Lint (proto)
@@ -82,22 +82,24 @@ task integration    # setup → test → teardown
 
 | Port | Component | Protocol |
 |------|-----------|----------|
-| 8080 | MCP SSE server | HTTP (SSE) |
+| —    | MCP stdio server (default) | newline-delimited JSON on stdin/stdout |
+| 8080 | MCP SSE server (`TRANSPORT=sse`) | HTTP (SSE) |
 
-Override via `LISTEN_ADDR` environment variable.
+Transport defaults to stdio (for local clients like Claude Desktop / Cursor). Enable the SSE HTTP server via `TRANSPORT=sse`; override the listen address via `LISTEN_ADDR` / `-listen`.
 
 ## Key Interfaces
 
 ```go
-// k8s.Client — all Kubernetes API operations (17 methods)
+// k8s.Client — all Kubernetes API operations (36 methods)
 type Client interface { ... }  // internal/k8s/client.go
 
 // Generated handler interfaces (one per proto service)
-DiagnosticsAPIToolHandler   // proto/deckhouse/v1/diagnostics.mcp.go  (8 methods)
-ModulesAPIToolHandler        // proto/deckhouse/v1/modules.mcp.go     (4 methods)
+DiagnosticsAPIToolHandler   // proto/deckhouse/v1/diagnostics.mcp.go  (11 methods)
+ModulesAPIToolHandler        // proto/deckhouse/v1/modules.mcp.go     (7 methods)
 ReleasesAPIToolHandler       // proto/deckhouse/v1/releases.mcp.go    (3 methods)
-NodesAPIToolHandler          // proto/deckhouse/v1/nodes.mcp.go       (7 methods)
-ConfigAPIToolHandler         // proto/deckhouse/v1/config.mcp.go      (1 method)
+NodesAPIToolHandler          // proto/deckhouse/v1/nodes.mcp.go       (13 methods)
+ConfigAPIToolHandler         // proto/deckhouse/v1/config.mcp.go      (3 methods)
+SourcesAPIToolHandler        // proto/deckhouse/v1/sources.mcp.go     (6 methods)
 ```
 
 ## Adding New Handlers

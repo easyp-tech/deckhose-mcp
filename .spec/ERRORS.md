@@ -1,5 +1,5 @@
-<!-- generated: 2026-04-14, template: errors.md -->
-# Error Handling — Deckhouse MCP Server
+<!-- generated: 2026-07-07, template: errors.md -->
+# Error Handling — Deckhouse Harness
 
 ## 1. Error Architecture
 
@@ -109,7 +109,20 @@ if !found {
 
 Never panic on missing unstructured fields.
 
-## 7. Error Propagation to MCP Client
+## 7. Actionable Errors from Raw K8s API Errors
+
+Where a raw client-go error is opaque, the client layer rewrites it into an actionable message the AI agent can act on. `ListNodeGroups` and `ListStaticInstances` in `internal/k8s/client.go` special-case the "CRD not registered" API error (returned when an optional module is disabled) into a message naming the GVR and the module to enable:
+
+```go
+// When the deckhouse.io/v1/nodegroups CRD is not served by the API:
+return nil, fmt.Errorf(
+    "CRD deckhouse.io/v1/nodegroups not registered (is node-manager module enabled?)",
+)
+```
+
+This turns a generic "the server could not find the requested resource" into a hint that the optional `node-manager` module needs enabling. Integration tests that hit these tools skip (exit 77) when the CRD is absent rather than failing.
+
+## 8. Error Propagation to MCP Client
 
 The MCP Go SDK converts returned Go errors into MCP `CallToolResult` with `isError: true`. The `content` is the `.Error()` string of the returned error, which includes the full wrapped chain:
 

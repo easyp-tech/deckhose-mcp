@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `main.go` now decides the transport at startup instead of hard-coding stdio.
 - `serveSSE()` now uses `ReadHeaderTimeout=5s` and `shutdownTimeout=10s` (was 5s).
 - Updated docs (README, AGENTS.md) to describe dual transport and in-cluster deployment.
+- **Docs refresh.** Brought the reference docs in line with the code: refreshed the `.spec/` set (23 → 43 tools across 6 services, 70/38 → 134 unit tests, 17 → 36 `k8s.Client` methods, SSE-only → dual stdio+SSE transport, all 10 CRDs, full-43-tool RBAC table) — including a full rewrite of `.spec/API.md`; removed dangling `ROADMAP.md` links; corrected the `k8s.Client` method count in `AGENTS.md` (~40 → 36).
+- **Rename to `deckhouse-harness`.** The Docker image and all Kubernetes resources (Service/Deployment/ServiceAccount `deckhouse-harness`, ClusterRole/Binding `d8:deckhouse-harness`) were renamed from `deckhouse-mcp` to match the binary/module, resolving the split naming (`Taskfile.yml` `IMAGE_NAME`, `deploy/*.yaml`, README/AGENTS references).
 - `go.mod` already uses MCP SDK v1.6.0 (which includes maintained SSE support).
 - Version bumped `0.3.0` → `0.3.1`.
 
@@ -43,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `protoc-gen-mcp` upgraded v0.3.1 → v0.5.0 (`easyp.yaml`, `go.mod`, `easyp.lock`)
 - `cmd/deckhouse-harness/main.go` rewritten: `loadKubeConfig()`, `configureLogger()`, dual-mode `run()` with `serveSSE()`
-- `Taskfile.yml`: `docker:build` and `docker:load` tasks restored; `build` outputs `./deckhouse-harness`; `IMAGE_NAME=deckhouse-mcp` for Docker
+- `Taskfile.yml`: `docker:build` and `docker:load` tasks restored; `build` outputs `./deckhouse-harness`; `IMAGE_NAME=deckhouse-harness` for Docker
 - `tests/integration/setup.sh`: dual-mode — stdio builds local binary; SSE builds Docker image, loads into Kind, applies `deploy/`, starts port-forward
 - `tests/integration/test.sh`: dual-mode helpers — stdio uses FIFO (`mcp_connect`/`mcp_disconnect`/`mcp_send`/`mcp_recv`); SSE uses curl (`curl -sN` for SSE stream, `curl -X POST` for requests); all 58 test cases unchanged
 - `tests/integration/teardown.sh`: dual-mode cleanup — stdio removes binary; SSE kills port-forward, optionally deletes deployment

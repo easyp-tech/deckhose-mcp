@@ -2,7 +2,7 @@ version: "3"
 
 vars:
   BINARY_NAME: deckhouse-harness
-  IMAGE_NAME: deckhouse-mcp
+  IMAGE_NAME: deckhouse-harness
   NAMESPACE: d8-system
 
 tasks:

@@ -1,5 +1,5 @@
-<!-- generated: 2026-05-12, template: core.md -->
-# Domain Model — Deckhouse MCP Server
+<!-- generated: 2026-07-07, template: core.md -->
+# Domain Model — Deckhouse Harness
 
 ## Core Concepts
 
@@ -19,13 +19,22 @@ The domain is Deckhouse Kubernetes Platform management. The server exposes K8s a
 
 | CRD | Group | Version | Resource | Operations |
 |-----|-------|---------|----------|------------|
-| `NodeGroup` | `deckhouse.io` | `v1` | `nodegroups` | get, list, create |
+| `NodeGroup` | `deckhouse.io` | `v1` | `nodegroups` | get, list, create, delete |
 | `StaticInstance` | `deckhouse.io` | `v1alpha2` | `staticinstances` | get, list, create, delete |
-| `SSHCredentials` | `deckhouse.io` | `v1alpha2` | `sshcredentials` | create |
-| `ModuleConfig` | `deckhouse.io` | `v1alpha1` | `moduleconfigs` | get, list, update |
+| `SSHCredentials` | `deckhouse.io` | `v1alpha2` | `sshcredentials` | create, delete |
+| `ModuleConfig` | `deckhouse.io` | `v1alpha1` | `moduleconfigs` | get, list, update, patch |
 | `DeckhouseRelease` | `deckhouse.io` | `v1alpha1` | `deckhouserelease` | get, list, patch |
+| `Module` | `deckhouse.io` | `v1alpha1` | `modules` | list |
+| `ModuleSource` | `deckhouse.io` | `v1alpha1` | `modulesources` | list, create, delete |
+| `ModuleUpdatePolicy` | `deckhouse.io` | `v1alpha1` | `moduleupdatepolicies` | list, create |
+| `ModuleRelease` | `deckhouse.io` | `v1alpha1` | `modulereleases` | list |
+| `NodeGroupConfiguration` | `deckhouse.io` | `v1alpha1` | `nodegroupconfigurations` | create |
 
-All CRDs are handled as `unstructured.Unstructured` — no generated Go types.
+All 10 CRDs are handled as `unstructured.Unstructured` — no generated Go types.
+
+When a required CRD is not registered (for example, the node-manager module is
+disabled), list operations return an actionable error such as
+`"CRD deckhouse.io/v1/nodegroups not registered (is node-manager module enabled?)"`.
 
 ### NodeGroup
 Controls a group of homogeneous nodes. Key status fields:
@@ -73,14 +82,14 @@ MCP tools are organized in 6 blocks (A–F), corresponding to proto service file
 
 | Block | Domain | Tools (implemented) |
 |-------|--------|---------------------|
-| A: Diagnostics | Read-only cluster observability | `GetClusterStatus`, `ListNodes`, `ListNodeGroups`, `ListStaticInstances`, `ListUnhealthyPods`, `GetNode`, `GetNodeGroup`, `GetDeckhouseLogs` |
-| B: Modules | ModuleConfig management | `ListModuleConfigs`, `GetModuleConfig`, `EnableModule`, `DisableModule` |
-| C: Releases | Deckhouse release management | `ListDeckhouseReleases`, `GetDeckhouseRelease`, `ApproveRelease` |
-| D: Nodes | Node lifecycle (static nodes) | `CreateSSHCredentials`, `CreateStaticInstance`, `AddWorkerNode`, `DeleteStaticInstance`, `RemoveNode`, `CreateNodeGroup`, `WaitNodeReady` |
-| E: Config | Cluster configuration | `GetClusterConfiguration` |
-| F: Sources | ModuleSource and update policies | (not yet implemented) |
+| A: Diagnostics (11) | Read-only cluster observability | `GetClusterStatus`, `ListNodes`, `ListNodeGroups`, `ListStaticInstances`, `ListUnhealthyPods`, `GetNode`, `GetNodeGroup`, `GetDeckhouseLogs`, `GetNodeEvents`, `GetStaticInstance`, `GetPodLogs` |
+| B: Modules (7) | Module and ModuleConfig management | `ListModuleConfigs`, `GetModuleConfig`, `EnableModule`, `DisableModule`, `ListModules`, `UpdateModuleSettings`, `SetModuleMaintenance` |
+| C: Releases (3) | Deckhouse release management | `ListDeckhouseReleases`, `GetDeckhouseRelease`, `ApproveRelease` |
+| D: Nodes (13) | Node lifecycle (static nodes) | `CreateSSHCredentials`, `DeleteSSHCredentials`, `CreateStaticInstance`, `DeleteStaticInstance`, `AddWorkerNode`, `RemoveNode`, `CreateNodeGroup`, `DeleteNodeGroup`, `WaitNodeReady`, `CordonNode`, `UncordonNode`, `DrainNode`, `CreateNodeGroupConfiguration` |
+| E: Config (3) | Cluster configuration | `GetClusterConfiguration`, `GetStaticClusterConfiguration`, `UpdateKubernetesVersion` |
+| F: Sources (6) | ModuleSource, update policies, module releases | `ListModuleSources`, `CreateModuleSource`, `DeleteModuleSource`, `ListModuleUpdatePolicies`, `CreateModuleUpdatePolicy`, `ListModuleReleases` |
 
-**Total: 23 implemented tools** (P0 + P1 complete).
+**Total: 43 implemented tools** (all P0–P3 implemented).
 
 ## Tool Naming
 

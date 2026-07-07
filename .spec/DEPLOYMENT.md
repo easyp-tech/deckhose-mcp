@@ -1,9 +1,11 @@
-<!-- generated: 2026-05-12, template: deployment.md -->
-# Deployment — Deckhouse MCP Server
+<!-- generated: 2026-07-07, template: deployment.md -->
+# Deployment — Deckhouse Harness
 
 ## 1. Overview
 
 Deployed as a **Kubernetes Pod** inside the Deckhouse-managed cluster it manages. No external cluster, no PaaS — in-cluster only.
+
+The server supports dual transport: **stdio (default)** for local clients and **SSE (HTTP)** for in-cluster serving. The `deploy/` manifests target the in-cluster SSE mode — the Deployment sets `TRANSPORT=sse` and exposes port 8080; stdio is used when running locally.
 
 ```
 git push
@@ -81,24 +83,24 @@ ClusterIP service on port 8080. Internal DNS:
 
 ServiceAccount `deckhouse-harness` in `d8-system` with `ClusterRole`.
 
-**Current permissions (P0 + P1):**
+**Current permissions (all 43 tools, P0–P3):**
 
 | Resource | APIGroup | Verbs |
 |----------|----------|-------|
 | `nodes`, `pods`, `events` | `""` (core) | `get`, `list` |
-| `nodes` | `""` (core) | `update`, `patch` |
-| `pods/log` | `""` (core) | `get` |
-| `secrets` (named: `d8-cluster-configuration`) | `""` (core) | `get` |
-| `nodegroups`, `staticinstances`, `moduleconfigs`, `deckhouserelease` | `deckhouse.io` | `get`, `list` |
-| `staticinstances`, `sshcredentials` | `deckhouse.io` | `create` |
-| `staticinstances` | `deckhouse.io` | `delete` |
-| `nodegroups` | `deckhouse.io` | `create` |
-| `moduleconfigs` | `deckhouse.io` | `update` |
-| `deckhouserelease` | `deckhouse.io` | `patch` |
+| `pods/log` | `""` (core) | `get`, `list` |
+| `nodes` | `""` (core) | `update`, `patch` (cordon/uncordon/drain) |
+| `pods/eviction` | `""` (core) | `create` (drain) |
+| `secrets` (named: `d8-cluster-configuration`) | `""` (core) | `get`, `update` |
+| `nodegroups`, `staticinstances`, `moduleconfigs`, `deckhousereleases`, `modules`, `modulesources`, `moduleupdatepolicies`, `modulereleases` | `deckhouse.io` | `get`, `list` |
+| `staticinstances`, `sshcredentials`, `nodegroups`, `modulesources`, `moduleupdatepolicies`, `nodegroupconfigurations` | `deckhouse.io` | `create` |
+| `staticinstances`, `sshcredentials`, `nodegroups`, `modulesources` | `deckhouse.io` | `delete` |
+| `moduleconfigs` | `deckhouse.io` | `update`, `patch` |
+| `deckhousereleases` | `deckhouse.io` | `patch` |
 
-**Expanding RBAC for P2+ handlers:**
+**Expanding RBAC for new handlers:**
 
-When adding new handlers, expand `deploy/rbac.yaml` with minimum required permissions. Refer to `ROADMAP.md` for the P2/P3 additions table. Always use least-privilege (specific verbs only).
+When adding new handlers, expand `deploy/rbac.yaml` with least-privilege permissions for the resources each new tool touches. Always add only the specific verbs needed (no wildcards).
 
 ## 5. Rollout Strategy
 
@@ -137,4 +139,5 @@ kubectl -n d8-system get pods -l app=deckhouse-harness
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LISTEN_ADDR` | `:8080` | HTTP listen address for SSE server |
+| `TRANSPORT` | `stdio` | Transport mode: `stdio` (local) or `sse` (in-cluster; set by the Deployment) |
+| `LISTEN_ADDR` | `:8080` | HTTP listen address for the SSE server |

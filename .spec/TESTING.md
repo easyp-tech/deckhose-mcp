@@ -1,5 +1,5 @@
-<!-- generated: 2026-04-14, template: development.md -->
-# Testing Conventions — Deckhouse MCP Server
+<!-- generated: 2026-07-07, template: development.md -->
+# Testing Conventions — Deckhouse Harness
 
 ## 1. Test Package Naming
 
@@ -15,19 +15,24 @@ Each handler has a dedicated test file:
 
 | File | Coverage |
 |------|----------|
-| `diagnostics_test.go` | 19 tests for `DiagnosticsHandler` |
-| `modules_test.go` | 3 tests for `ModulesHandler` |
-| `releases_test.go` | 2 tests for `ReleasesHandler` |
-| `nodes_test.go` | 11 tests for `NodesHandler` |
+| `diagnostics_test.go` | 35 tests for `DiagnosticsHandler` |
+| `modules_test.go` | 21 tests for `ModulesHandler` |
+| `releases_test.go` | 7 tests for `ReleasesHandler` |
+| `nodes_test.go` | 42 tests for `NodesHandler` |
+| `config_test.go` | 9 tests for `ConfigHandler` |
+| `sources_test.go` | 17 tests for `SourcesHandler` |
 | `errors_test.go` | 3 tests for K8s error propagation |
 | `mock_client_test.go` | `mockClient` definition (shared across all test files) |
 
+**Total: 134 unit tests.**
+
 ## 3. Mock Client
 
-All tests use `mockClient` — a struct with function fields, one per `k8s.Client` method:
+All tests use `mockClient` — a struct with function fields, one per `k8s.Client`
+method (36 function fields covering all 11 core + 25 CRD methods):
 
 ```go
-// mock_client_test.go
+// mock_client_test.go (abbreviated — 36 fields total)
 type mockClient struct {
     listNodesFunc             func(ctx context.Context) ([]corev1.Node, error)
     listPodsFunc              func(ctx context.Context, namespace string) ([]corev1.Pod, error)
@@ -38,6 +43,8 @@ type mockClient struct {
     listModuleConfigsFunc     func(ctx context.Context) ([]unstructured.Unstructured, error)
     listDeckhouseReleasesFunc func(ctx context.Context) ([]unstructured.Unstructured, error)
     createSSHCredentialsFunc  func(ctx context.Context, obj *unstructured.Unstructured) (*unstructured.Unstructured, error)
+    listModuleSourcesFunc     func(ctx context.Context) ([]unstructured.Unstructured, error)
+    // ... one field per remaining k8s.Client method (36 total)
 }
 ```
 
@@ -130,11 +137,12 @@ func makeRelease(name, version, phase string) unstructured.Unstructured { ... }
 
 ## 5. Polling Tests
 
-`AddWorkerNode` tests use real `time.Sleep` via `pollInterval`. These are slow by design:
+`AddWorkerNode`/`WaitNodeReady` tests use real `time.Sleep` via `pollInterval`
+(30s clock). These are slow by design:
 
 ```go
-// Each AddWorkerNode polling test takes ~30s (one poll cycle)
-// Total nodes_test.go runtime: ~4-5 minutes with multiple polling scenarios
+// Each polling test takes ~30s (one poll cycle)
+// Full suite runtime (134 tests): ~3 minutes, dominated by polling scenarios
 ```
 
 Do not use `time.AfterFunc` or fake clocks — the current design trades test speed for simplicity.
