@@ -122,6 +122,10 @@ return nil, fmt.Errorf(
 
 This turns a generic "the server could not find the requested resource" into a hint that the optional `node-manager` module needs enabling. Integration tests that hit these tools skip (exit 77) when the CRD is absent rather than failing.
 
+**Single-wrap rule.** The client adds *only* the actionable hint (or, for the generic case, returns the error unprefixed); the calling handler adds the operation prefix exactly once. So a missing-CRD failure reads `listing node groups: CRD deckhouse.io/v1/nodegroups not registered (is node-manager module enabled?): …` — not the doubled `listing node groups: listing node groups: …` the two layers used to produce.
+
+**Graceful degradation.** `k8s.IsCRDNotRegistered(err)` reports whether an error is this missing-CRD case (via `kerrors.IsNotFound` or the discovery message). Aggregate handlers use it to stay useful when an optional module is off: `GetClusterStatus` collects node-group status through this check and returns an empty `nodeGroups` list — plus the still-valid node counts, unhealthy-pod count and Deckhouse version — instead of failing the whole call.
+
 ## 8. Error Propagation to MCP Client
 
 The MCP Go SDK converts returned Go errors into MCP `CallToolResult` with `isError: true`. The `content` is the `.Error()` string of the returned error, which includes the full wrapped chain:

@@ -34,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `go.mod` already uses MCP SDK v1.6.0 (which includes maintained SSE support).
 - Version bumped `0.3.0` → `0.3.1`.
 
+### Fixed
+
+- **`GetClusterStatus` resilience.** It no longer hard-fails when the `nodegroups` CRD is absent (a valid configuration — the optional `node-manager` module is disabled). Node-group collection now degrades to an empty list instead of erroring the whole status. Added the `k8s.IsCRDNotRegistered(err)` helper used for the detection.
+- **Double-wrapped error messages.** The client layer no longer adds an operation prefix for `ListNodeGroups`, `ListStaticInstances` and `GetStaticInstance` — the handler owns the single prefix — so errors read `listing node groups: <cause>` instead of `listing node groups: listing node groups: <cause>`. The actionable "CRD not registered (is node-manager module enabled?)" hint is preserved.
+- **`ListModuleConfigs` empty `version`.** `spec.version` is an integer in the CR but was read as a string (always empty). It is now read as int64 and rendered as a string, consistent with `GetModuleConfig`.
+- Verified end-to-end against a live Deckhouse CE cluster (all 43 tools, incl. the module/release write tools through live admission webhooks) plus `go test ./...` (unit tests: `IsCRDNotRegistered`, `GetClusterStatus` degradation, `ListModuleConfigs` version).
+
 ### Notes
 
 - Stdio remains the default so existing local client configs are unaffected.

@@ -180,6 +180,8 @@ When `TRANSPORT=sse` and running inside a Kubernetes Pod (in-cluster config), th
 ### Error Handling
 
 - Kubernetes API errors → wrap with `fmt.Errorf("operation: %w", err)` → proxied as MCP tool error
+- **One prefix per error.** The handler owns the operation prefix; the `k8s.Client` returns errors unprefixed (except the actionable CRD-not-registered hint). Do NOT re-wrap a client error with the same verb — `ListNodeGroups`/`ListStaticInstances`/`GetStaticInstance` in `client.go` return the raw error so the handler's `"listing node groups: %w"` is applied exactly once (no `listing node groups: listing node groups: …`).
+- **Degrade on optional CRDs.** `k8s.IsCRDNotRegistered(err)` detects a Deckhouse CRD that is not served (its owning module — e.g. `node-manager` — is disabled). Aggregate handlers use it to degrade gracefully: `GetClusterStatus` returns an empty node-group list instead of failing the whole status.
 - Timeout in polling handlers → return last known state + `timedOut: true`
 - Missing resource → `not found` error, no panic
 - Error on step 1 of composite handler → abort remaining steps, report what was already created
