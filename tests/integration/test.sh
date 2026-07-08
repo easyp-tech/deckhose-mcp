@@ -1,32 +1,31 @@
 #!/usr/bin/env bash
-# Integration tests for Deckhouse MCP server (dual transport: stdio + SSE).
+# Integration tests for the Deckhouse MCP server (stdio transport).
 #
 # Usage: bash tests/integration/test.sh
 #
-# Transport is selected by the TRANSPORT env var (default: stdio):
-#   stdio — FIFO-based subprocess communication (default)
-#   sse   — HTTP/SSE via curl (requires port-forward from setup.sh)
+# The server is stdio-only: the tests run the binary as a subprocess and talk to
+# it over FIFOs (see mcp_helpers.sh).
 #
 # Requires: jq, kubectl, and a running Kind+Deckhouse cluster (see setup.sh).
-# All 58 test cases are transport-agnostic — only the helper layer differs.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 KUBE_CONTEXT="${KUBE_CONTEXT:-kind-d8}"
 BINARY_PATH="${BINARY_PATH:-$SCRIPT_DIR/deckhouse-harness}"
 STDERR_LOG="${STDERR_LOG:-$SCRIPT_DIR/mcp-stderr.log}"
-TRANSPORT_MODE="${TRANSPORT:-stdio}"
-if [ -f "$SCRIPT_DIR/.transport-mode" ]; then
-  TRANSPORT_MODE=$(cat "$SCRIPT_DIR/.transport-mode")
-fi
-MCP_BASE_URL="${MCP_BASE_URL:-http://localhost:8080}"
 
-if [ "$TRANSPORT_MODE" = "stdio" ] && [ ! -f "$BINARY_PATH" ]; then
+if [ ! -f "$BINARY_PATH" ]; then
   echo "ERROR: MCP binary not found at $BINARY_PATH. Run 'task integration:setup' first." >&2
   exit 1
 fi
 
-# --- MCP Helpers (dual transport) --------------------------------------------
+# --- MCP Helpers (shared) ----------------------------------------------------
+# Source the stdio transport helpers. This keeps one-shot and test code on the
+# same logic.
+source "$(cd "$(dirname "$0")" && pwd)/mcp_helpers.sh" || {
+  echo "ERROR: failed to source mcp_helpers.sh" >&2
+  exit 1
+}
 
 # Counters.
 PASSED=0
@@ -34,219 +33,12 @@ FAILED=0
 SKIPPED=0
 TOTAL=0
 
-# Temp dir for FIFOs / SSE stream / state.
-TMPDIR=$(mktemp -d)
-trap 'cleanup' EXIT
-
+# Legacy trap alias (helpers already register _mcp_cleanup)
 cleanup() {
   mcp_disconnect
-  rm -rf "$TMPDIR"
 }
 
-SERVER_PID=""
-MCP_ENDPOINT=""
-
-# ===========================================================================
-# stdio transport: FIFO-based subprocess communication
-# ===========================================================================
-if [ "$TRANSPORT_MODE" = "stdio" ]; then
-
-STDIN_FIFO="$TMPDIR/stdin"
-STDOUT_FIFO="$TMPDIR/stdout"
-mkfifo "$STDIN_FIFO" "$STDOUT_FIFO"
-
-# Start the MCP server as a background subprocess.
-mcp_connect() {
-  KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}" \
-    "$BINARY_PATH" < "$STDIN_FIFO" > "$STDOUT_FIFO" 2>"$STDERR_LOG" &
-  SERVER_PID=$!
-
-  # Open file descriptors for writing to stdin and reading from stdout.
-  exec 3>"$STDIN_FIFO"
-  exec 4<"$STDOUT_FIFO"
-}
-
-# Disconnect: close FIFOs and kill the server process.
-mcp_disconnect() {
-  exec 3>&- 4<&- 2>/dev/null || true
-  if [ -n "$SERVER_PID" ]; then
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
-    SERVER_PID=""
-  fi
-}
-
-# Send a single JSON-RPC message to the server stdin.
-mcp_send() {
-  echo "$1" >&3
-}
-
-# Read one line from the server stdout.
-mcp_recv() {
-  local line
-  IFS= read -r line <&4
-  echo "$line"
-}
-
-# Send a JSON-RPC request and wait for the response with matching id.
-# Usage: mcp_request <method> <params_json> [id]
-mcp_request() {
-  local method="$1"
-  local params="${2:-null}"
-  local id="${3:-1}"
-
-  local body
-  body=$(jq -n --arg method "$method" --argjson params "$params" --argjson id "$id" \
-    '{"jsonrpc":"2.0","method":$method,"params":$params,"id":$id}')
-
-  mcp_send "$body"
-
-  # Read lines until we find a response with our id.
-  local line
-  while IFS= read -r line <&4; do
-    if echo "$line" | jq -e --argjson id "$id" 'select(.id == $id)' >/dev/null 2>&1; then
-      echo "$line"
-      return 0
-    fi
-  done
-
-  echo '{"error":{"code":-1,"message":"EOF reading from server"}}' >&2
-  return 1
-}
-
-# ===========================================================================
-# SSE transport: curl-based HTTP/SSE communication
-# ===========================================================================
-else
-
-SSE_STREAM="$TMPDIR/sse_stream"
-SSE_PID=""
-
-mcp_connect() {
-  # Start SSE stream reader in background.
-  curl -sN "$MCP_BASE_URL/sse" > "$SSE_STREAM" 2>/dev/null &
-  SSE_PID=$!
-
-  # Wait for the endpoint event (first data: line in the stream).
-  local attempts=0
-  while [ "$attempts" -lt 100 ]; do
-    MCP_ENDPOINT=$(grep "^data:" "$SSE_STREAM" 2>/dev/null | head -1 | sed 's/^data:[ ]*//')
-    if [ -n "$MCP_ENDPOINT" ]; then
-      # If endpoint is relative, prepend base URL.
-      case "$MCP_ENDPOINT" in
-        http*) ;;
-        *) MCP_ENDPOINT="$MCP_BASE_URL$MCP_ENDPOINT" ;;
-      esac
-      return 0
-    fi
-    sleep 0.1
-    attempts=$((attempts + 1))
-  done
-
-  echo "ERROR: Failed to get SSE endpoint from $MCP_BASE_URL/sse" >&2
-  return 1
-}
-
-mcp_disconnect() {
-  if [ -n "$SSE_PID" ]; then
-    kill "$SSE_PID" 2>/dev/null || true
-    wait "$SSE_PID" 2>/dev/null || true
-    SSE_PID=""
-  fi
-}
-
-# Send a JSON-RPC message (POST). Used for notifications (no response expected).
-mcp_send() {
-  curl -s -X POST -H "Content-Type: application/json" -d "$1" "$MCP_ENDPOINT" >/dev/null 2>&1
-}
-
-# Send a JSON-RPC request and wait for the response with matching id.
-# The response arrives on the SSE stream (not the POST response body).
-# Usage: mcp_request <method> <params_json> [id]
-mcp_request() {
-  local method="$1"
-  local params="${2:-null}"
-  local id="${3:-1}"
-
-  local body
-  body=$(jq -n --arg method "$method" --argjson params "$params" --argjson id "$id" \
-    '{"jsonrpc":"2.0","method":$method,"params":$params,"id":$id}')
-
-  # Record current stream size to only search new data.
-  local offset
-  offset=$(wc -c < "$SSE_STREAM" 2>/dev/null || echo 0)
-
-  # POST the request (response comes on the SSE stream, not the POST body).
-  curl -s -X POST -H "Content-Type: application/json" -d "$body" "$MCP_ENDPOINT" >/dev/null 2>&1
-
-  # Poll the SSE stream for a response with matching id.
-  local attempts=0
-  while [ "$attempts" -lt 200 ]; do
-    local resp
-    resp=$(tail -c +"$((offset + 1))" "$SSE_STREAM" 2>/dev/null \
-      | grep "^data:" \
-      | sed 's/^data:[ ]*//' \
-      | jq -e --argjson id "$id" 'select(.id == $id)' 2>/dev/null \
-      | tail -1 || true)
-
-    if [ -n "$resp" ] && [ "$resp" != "null" ]; then
-      echo "$resp"
-      return 0
-    fi
-    sleep 0.1
-    attempts=$((attempts + 1))
-  done
-
-  echo '{"error":{"code":-1,"message":"Timeout waiting for SSE response"}}' >&2
-  return 1
-}
-
-fi
-# === End transport-specific helpers ==========================================
-
-# Initialize MCP session.
-mcp_initialize() {
-  local resp
-  resp=$(mcp_request "initialize" '{
-    "protocolVersion": "2024-11-05",
-    "capabilities": {},
-    "clientInfo": {"name": "integration-test", "version": "1.0.0"}
-  }' 0) || return 1
-
-  if echo "$resp" | jq -e '.error' >/dev/null 2>&1; then
-    echo "ERROR: Initialize failed: $(echo "$resp" | jq -r '.error.message')" >&2
-    return 1
-  fi
-
-  # Send initialized notification (no id = notification, no response expected).
-  mcp_send '{"jsonrpc":"2.0","method":"notifications/initialized"}'
-}
-
-# Call an MCP tool. Returns the result JSON.
-# Usage: mcp_call_tool <endpoint_ignored> <tool_name> [arguments_json] [request_id]
-# The first arg is kept for backward compatibility with the SSE-era test code.
-mcp_call_tool() {
-  local _endpoint="$1"
-  local tool_name="$2"
-  local arguments="${3:-}"
-  if [ -z "$arguments" ]; then arguments='{}'; fi
-  local id="${4:-$((RANDOM % 10000 + 100))}"
-
-  local params
-  params=$(jq -n --arg name "$tool_name" --argjson args "$arguments" \
-    '{"name":$name,"arguments":$args}')
-
-  local resp
-  resp=$(mcp_request "tools/call" "$params" "$id") || return 1
-
-  if echo "$resp" | jq -e '.error' >/dev/null 2>&1; then
-    echo "TOOL ERROR: $(echo "$resp" | jq -r '.error.message')" >&2
-    echo "$resp"
-    return 1
-  fi
-
-  echo "$resp" | jq -r '.result.content[0].text // .result'
-}
+# Common functions (mcp_initialize, mcp_call_tool) are provided by mcp_helpers.sh.
 
 # --- Assertions ---------------------------------------------------------------
 
@@ -335,13 +127,16 @@ test_list_node_groups() {
   local result
   result=$(mcp_call_tool "" "deckhouse_ListNodeGroups") || return 1
 
-  assert_jq "$result" '.nodeGroups | length >= 1' "at least 1 node group" || return 1
+  # In minimal kind-d8 (node-manager disabled) there may be 0 NodeGroups.
+  # The important thing is that the field exists and is an array.
+  assert_jq "$result" '.nodeGroups | type == "array"' "nodeGroups is an array (may be empty)" || return 1
 }
 
 test_list_static_instances() {
   local result
   result=$(mcp_call_tool "" "deckhouse_ListStaticInstances") || return 1
 
+  # May be empty if no StaticInstance CRD / data.
   assert_jq "$result" '.instances | type == "array"' "instances is array" || return 1
 }
 
@@ -375,6 +170,10 @@ test_list_deckhouse_releases() {
 }
 
 test_create_ssh_credentials() {
+  if ! kubectl --context "$KUBE_CONTEXT" get crd sshcredentials.deckhouse.io >/dev/null 2>&1; then
+    echo "SKIP: sshcredentials CRD not installed (node-manager disabled?)"
+    return 77
+  fi
   kubectl --context "$KUBE_CONTEXT" delete sshcredentials integration-test-creds --ignore-not-found=true >/dev/null 2>&1 || true
 
   local result
@@ -393,6 +192,10 @@ test_create_ssh_credentials() {
 }
 
 test_create_static_instance() {
+  if ! kubectl --context "$KUBE_CONTEXT" get crd staticinstances.deckhouse.io >/dev/null 2>&1; then
+    echo "SKIP: staticinstances CRD not installed"
+    return 77
+  fi
   kubectl --context "$KUBE_CONTEXT" delete staticinstances integration-test-si --ignore-not-found=true >/dev/null 2>&1 || true
 
   local result
@@ -516,6 +319,10 @@ test_get_cluster_configuration() {
 # --- P1 write tests -----------------------------------------------------------
 
 test_create_node_group() {
+  if ! kubectl --context "$KUBE_CONTEXT" get crd nodegroups.deckhouse.io >/dev/null 2>&1; then
+    echo "SKIP: nodegroups CRD not installed"
+    return 77
+  fi
   kubectl --context "$KUBE_CONTEXT" delete nodegroups integration-test-ng --ignore-not-found=true >/dev/null 2>&1 || true
 
   local result
@@ -1141,14 +948,10 @@ test_list_module_releases_empty_module_name() {
 
 main() {
   echo "========================================"
-  echo "Deckhouse MCP Integration Tests ($TRANSPORT_MODE)"
+  echo "Deckhouse MCP Integration Tests (stdio)"
   echo "========================================"
-  if [ "$TRANSPORT_MODE" = "stdio" ]; then
-    echo "Binary: $BINARY_PATH"
-    echo "Stderr log: $STDERR_LOG"
-  else
-    echo "Base URL: $MCP_BASE_URL"
-  fi
+  echo "Binary: $BINARY_PATH"
+  echo "Stderr log: $STDERR_LOG"
   echo "Kube context: $KUBE_CONTEXT"
   echo ""
 

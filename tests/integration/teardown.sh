@@ -5,37 +5,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 KUBE_CONTEXT="${KUBE_CONTEXT:-kind-d8}"
 KIND_CLUSTER_NAME="${KIND_CLUSTER_NAME:-d8}"
-TRANSPORT_MODE="${TRANSPORT:-stdio}"
-if [ -f "$SCRIPT_DIR/.transport-mode" ]; then
-  TRANSPORT_MODE=$(cat "$SCRIPT_DIR/.transport-mode")
-fi
 
 info()  { echo "==> $*"; }
 
 # --- Stop MCP server ----------------------------------------------------------
-case "$TRANSPORT_MODE" in
-  stdio)
-    if [ -f "$SCRIPT_DIR/deckhouse-harness" ]; then
-      info "Removing MCP binary..."
-      rm -f "$SCRIPT_DIR/deckhouse-harness"
-    fi
-    ;;
-  sse)
-    if [ -f "$SCRIPT_DIR/.port-forward.pid" ]; then
-      local_pid=$(cat "$SCRIPT_DIR/.port-forward.pid")
-      info "Killing port-forward (PID $local_pid)..."
-      kill "$local_pid" 2>/dev/null || true
-      rm -f "$SCRIPT_DIR/.port-forward.pid" "$SCRIPT_DIR/.port-forward.log"
-    fi
-    if [ "${DELETE_DEPLOYMENT:-}" = "true" ]; then
-      info "Deleting deckhouse-mcp deployment and service..."
-      kubectl --context "$KUBE_CONTEXT" delete deployment/deckhouse-mcp -n d8-system 2>/dev/null || true
-      kubectl --context "$KUBE_CONTEXT" delete svc/deckhouse-mcp -n d8-system 2>/dev/null || true
-    fi
-    ;;
-esac
+if [ -f "$SCRIPT_DIR/deckhouse-harness" ]; then
+  info "Removing MCP binary..."
+  rm -f "$SCRIPT_DIR/deckhouse-harness"
+fi
 
-rm -f "$SCRIPT_DIR/.transport-mode" "$SCRIPT_DIR/.kube-context" "$SCRIPT_DIR/.binary-path"
+rm -f "$SCRIPT_DIR/.kube-context" "$SCRIPT_DIR/.binary-path"
 
 # --- Delete test resources ----------------------------------------------------
 info "Cleaning up integration test resources..."
@@ -52,4 +31,4 @@ if [ "${DELETE_CLUSTER:-}" = "true" ]; then
   kind delete cluster --name "$KIND_CLUSTER_NAME"
 fi
 
-info "Teardown complete (transport: $TRANSPORT_MODE)."
+info "Teardown complete."
